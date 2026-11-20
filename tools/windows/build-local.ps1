@@ -98,12 +98,6 @@ if ($cmakeVersion -lt [version]"4.4") {
           "'winget install -e --id Kitware.CMake' and open a new terminal.")
 }
 
-foreach ($tool in @("cmake", "ninja")) {
-    if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
-        Fail "$tool not found. Install the 'C++ CMake tools for Windows' component in the Visual Studio Installer."
-    }
-}
-
 if ($Compiler -eq "auto") {
     $Compiler = "msvc"
 }
