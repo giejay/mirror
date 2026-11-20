@@ -78,23 +78,34 @@ if (-not $env:VCINSTALLDIR) {
     }
 }
 
+# Visual Studio's environment puts its own (older) CMake first on PATH; prefer a standalone CMake
+# from Kitware when one is installed.
+$standaloneCmake = Join-Path $env:ProgramFiles "CMake\bin"
+if (Test-Path (Join-Path $standaloneCmake "cmake.exe")) {
+    $env:PATH = "$standaloneCmake;$env:PATH"
+}
+
+foreach ($tool in @("cmake", "ninja")) {
+    if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
+        Fail "$tool not found. Install the 'C++ CMake tools for Windows' component in the Visual Studio Installer."
+    }
+}
+# Eden needs C++26 and C++20 module scanning, which only recent CMake versions handle.
+$cmakeVersion = [version]((& cmake --version | Select-Object -First 1) -replace '[^\d\.]', '' -replace '\.+$', '')
+Write-Host "build-local: CMake $cmakeVersion"
+if ($cmakeVersion -lt [version]"4.4") {
+    Fail ("CMake $cmakeVersion is too old for Eden (needs 4.4+ for C++26 and modules). Install it with " +
+          "'winget install -e --id Kitware.CMake' and open a new terminal.")
+}
+
 foreach ($tool in @("cmake", "ninja")) {
     if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
         Fail "$tool not found. Install the 'C++ CMake tools for Windows' component in the Visual Studio Installer."
     }
 }
 
-# Eden uses C++20 modules: MSVC (VS 2026) works with the CMake that ships with Visual Studio, while
-# clang-cl needs CMake 4.4 or newer for module scanning.
 if ($Compiler -eq "auto") {
     $Compiler = "msvc"
-}
-if ($Compiler -eq "clang-cl") {
-    $cmakeVersion = [version]((& cmake --version | Select-Object -First 1) -replace '[^\d\.]', '')
-    if ($cmakeVersion -lt [version]"4.4") {
-        Fail ("clang-cl builds of Eden need CMake 4.4+ (found $cmakeVersion). Install it with " +
-              "'winget install -e --id Kitware.CMake', open a new terminal, or use -Compiler msvc.")
-    }
 }
 if ($Compiler -eq "clang-cl") {
     if (-not (Get-Command clang-cl -ErrorAction SilentlyContinue)) {
@@ -209,7 +220,11 @@ try { $lineWidth = [Math]::Max(40, $Host.UI.RawUI.WindowSize.Width - 1) } catch 
 # turned into plain strings and the error preference relaxed while it runs.
 function Invoke-Quiet([string[]]$Arguments, [string]$Log) {
     $ErrorActionPreference = "Continue"
-    & cmake @Arguments 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $Log | ForEach-Object {
+    & cmake @Arguments 2>&1 | ForEach-Object {
+        # stderr lines arrive as error records; an empty one prints as its exception type.
+        $text = if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { "$_" }
+        if ($text -eq "System.Management.Automation.RemoteException") { "" } else { $text }
+    } | Tee-Object -FilePath $Log | ForEach-Object {
         if ($_ -match '^\[(\d+)/(\d+)\]\s*(.*)$') {
             $text = "[$($matches[1])/$($matches[2])] $($matches[3])"
             if ($text.Length -gt $lineWidth) { $text = $text.Substring(0, $lineWidth) }
