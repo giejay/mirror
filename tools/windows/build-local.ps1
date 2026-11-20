@@ -98,8 +98,20 @@ if ($cmakeVersion -lt [version]"4.4") {
           "'winget install -e --id Kitware.CMake' and open a new terminal.")
 }
 
+# Prefer a standalone LLVM (newer clang-cl) over the one Visual Studio ships, when installed.
+$standaloneLlvm = Join-Path $env:ProgramFiles "LLVM\bin"
+if (Test-Path (Join-Path $standaloneLlvm "clang-cl.exe")) {
+    $env:PATH = "$standaloneLlvm;$env:PATH"
+}
+
+# dynarmic is C++26, which CMake can't enable for MSVC; clang-cl (with CMake 4.4+) handles it.
 if ($Compiler -eq "auto") {
-    $Compiler = "msvc"
+    if (-not (Get-Command clang-cl -ErrorAction SilentlyContinue)) {
+        Fail ("clang-cl not found. Eden's dynarmic needs C++26, which CMake only enables for clang-cl " +
+              "on Windows. Install LLVM ('winget install -e --id LLVM.LLVM') or add the 'C++ Clang " +
+              "tools for Windows' component, then open a new terminal.")
+    }
+    $Compiler = "clang-cl"
 }
 if ($Compiler -eq "clang-cl") {
     if (-not (Get-Command clang-cl -ErrorAction SilentlyContinue)) {
