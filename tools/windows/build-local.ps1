@@ -226,8 +226,14 @@ function Invoke-Quiet([string[]]$Arguments, [string]$Log) {
 
 function Show-Errors([string]$Log) {
     Write-Host "build-local: errors (first 30 lines):" -ForegroundColor Red
-    Select-String -Path $Log -Pattern $errorPattern | Select-Object -First 30 |
-        ForEach-Object { Write-Host "  $($_.Line)" }
+    # CMake puts the explanation on the lines after "CMake Error", so show those too.
+    Select-String -Path $Log -Pattern $errorPattern -Context 0, 6 | Select-Object -First 15 |
+        ForEach-Object {
+            Write-Host "  $($_.Line)"
+            if ($_.Line -match "CMake Error") {
+                $_.Context.PostContext | Where-Object { $_.Trim() } | ForEach-Object { Write-Host "    $_" }
+            }
+        }
 }
 
 Write-Host "build-local: configuring (the first run downloads dependencies and takes a while)"
