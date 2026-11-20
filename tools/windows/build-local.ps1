@@ -84,8 +84,17 @@ foreach ($tool in @("cmake", "ninja")) {
     }
 }
 
+# Eden uses C++20 modules: MSVC (VS 2026) works with the CMake that ships with Visual Studio, while
+# clang-cl needs CMake 4.4 or newer for module scanning.
 if ($Compiler -eq "auto") {
-    $Compiler = if (Get-Command clang-cl -ErrorAction SilentlyContinue) { "clang-cl" } else { "msvc" }
+    $Compiler = "msvc"
+}
+if ($Compiler -eq "clang-cl") {
+    $cmakeVersion = [version]((& cmake --version | Select-Object -First 1) -replace '[^\d\.]', '')
+    if ($cmakeVersion -lt [version]"4.4") {
+        Fail ("clang-cl builds of Eden need CMake 4.4+ (found $cmakeVersion). Install it with " +
+              "'winget install -e --id Kitware.CMake', open a new terminal, or use -Compiler msvc.")
+    }
 }
 if ($Compiler -eq "clang-cl") {
     if (-not (Get-Command clang-cl -ErrorAction SilentlyContinue)) {
