@@ -852,6 +852,18 @@ struct Values {
 #endif
     };
     Setting<bool> controller_navigation{linkage, true, "controller_navigation", Category::Controls};
+    // Automatically assign connected game controllers to player slots (Fritchii).
+    Setting<bool> auto_assign_controllers{linkage, false, "auto_assign_controllers",
+                                          Category::Controls};
+    // Optional input profile used as template for auto-assigned controllers. Empty = automap.
+    Setting<std::string> auto_assign_profile{linkage, std::string{}, "auto_assign_profile",
+                                             Category::Controls};
+    // Only assign controllers that pressed a button (skips virtual/ghost pads).
+    Setting<bool> auto_assign_require_input{linkage, true, "auto_assign_require_input",
+                                            Category::Controls};
+    // Highest number of player slots that auto-assign may fill (1-8).
+    Setting<u8, true> auto_assign_max_players{linkage, 8, 1, 8, "auto_assign_max_players",
+                                              Category::Controls};
     Setting<bool> enable_joycon_driver{linkage, true, "enable_joycon_driver", Category::Controls};
     Setting<bool> enable_procon_driver{linkage, false, "enable_procon_driver", Category::Controls};
 

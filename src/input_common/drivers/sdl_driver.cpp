@@ -590,6 +590,94 @@ void SDLDriver::InitJoystick(SDL_JoystickID joystick_id) {
     joystick_guid_list.emplace_back(std::move(joystick));
 }
 
+void SDLDriver::MarkActive(const std::shared_ptr<SDLJoystick>& joystick) {
+    const auto identifier = joystick->GetPadIdentifier();
+    PadKey key{identifier.guid.RawString(), static_cast<int>(identifier.port)};
+    std::scoped_lock lock{assign_mutex};
+    if (active_pads.insert(std::move(key)).second) {
+        device_generation.fetch_add(1, std::memory_order_release);
+    }
+}
+
+void SDLDriver::HandleGamepadButtonDown(const std::shared_ptr<SDLJoystick>& joystick,
+                                        SDL_GamepadButton button) {
+    MarkActive(joystick);
+    const auto identifier = joystick->GetPadIdentifier();
+    const PadKey key{identifier.guid.RawString(), static_cast<int>(identifier.port)};
+
+    std::scoped_lock lock{assign_mutex};
+    if (menu_device && *menu_device == key) {
+        switch (button) {
+        case SDL_GAMEPAD_BUTTON_DPAD_UP:
+            menu_buttons.push_back(MenuButton::Up);
+            break;
+        case SDL_GAMEPAD_BUTTON_DPAD_DOWN:
+            menu_buttons.push_back(MenuButton::Down);
+            break;
+        case SDL_GAMEPAD_BUTTON_DPAD_LEFT:
+            menu_buttons.push_back(MenuButton::Left);
+            break;
+        case SDL_GAMEPAD_BUTTON_DPAD_RIGHT:
+            menu_buttons.push_back(MenuButton::Right);
+            break;
+        case SDL_GAMEPAD_BUTTON_SOUTH:
+            menu_buttons.push_back(MenuButton::Accept);
+            break;
+        case SDL_GAMEPAD_BUTTON_EAST:
+            menu_buttons.push_back(MenuButton::Back);
+            break;
+        case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER:
+            menu_buttons.push_back(MenuButton::PreviousPage);
+            break;
+        case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER:
+            menu_buttons.push_back(MenuButton::NextPage);
+            break;
+        default:
+            break;
+        }
+        return;
+    }
+
+    // L + R + Start opens the controller assignment window for this controller.
+    auto* const gamepad = joystick->GetSDLGameController();
+    if (gamepad == nullptr || !SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER) ||
+        !SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) ||
+        !SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_START)) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_assign_request < std::chrono::seconds{1}) {
+        return;
+    }
+    last_assign_request = now;
+    assign_request = Common::ParamPackage{
+        {"engine", GetEngineName()},
+        {"display", std::format("{} {}", joystick->GetControllerName(), joystick->GetPort())},
+        {"guid", key.first},
+        {"port", std::to_string(key.second)},
+    };
+}
+
+std::optional<Common::ParamPackage> SDLDriver::TakeAssignRequest() {
+    std::scoped_lock lock{assign_mutex};
+    return std::exchange(assign_request, std::nullopt);
+}
+
+void SDLDriver::SetMenuDevice(std::optional<Common::ParamPackage> device) {
+    std::scoped_lock lock{assign_mutex};
+    menu_buttons.clear();
+    if (device) {
+        menu_device = PadKey{device->Get("guid", ""), device->Get("port", 0)};
+    } else {
+        menu_device.reset();
+    }
+}
+
+std::vector<MenuButton> SDLDriver::TakeMenuButtons() {
+    std::scoped_lock lock{assign_mutex};
+    return std::exchange(menu_buttons, {});
+}
+
 void SDLDriver::CloseJoystick(SDL_Joystick* sdl_joystick) {
     const auto guid = GetGUID(sdl_joystick);
 
@@ -605,6 +693,10 @@ void SDLDriver::CloseJoystick(SDL_Joystick* sdl_joystick) {
         if (Common::ControllerProbes()) {
             LOG_INFO(Input, "input: detach guid={} port={}", guid.RawString(),
                      static_cast<int>(joystick_it - joystick_guid_list.begin()));
+        }
+        {
+            std::scoped_lock assign_lock{assign_mutex};
+            active_pads.erase(PadKey{guid.RawString(), (*joystick_it)->GetPort()});
         }
         (*joystick_it)->SetSDLJoystick(nullptr, nullptr);
     }
@@ -630,6 +722,13 @@ void SDLDriver::HandleGameControllerEvent(const SDL_Event& event) {
         if (const auto joystick = GetSDLJoystickBySDLID(event.jbutton.which)) {
             const PadIdentifier identifier = joystick->GetPadIdentifier();
             SetButton(identifier, event.jbutton.button, true);
+            MarkActive(joystick);
+        }
+        break;
+    }
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN: {
+        if (const auto joystick = GetSDLJoystickBySDLID(event.gbutton.which)) {
+            HandleGamepadButtonDown(joystick, static_cast<SDL_GamepadButton>(event.gbutton.button));
         }
         break;
     }
@@ -686,10 +785,12 @@ void SDLDriver::HandleGameControllerEvent(const SDL_Event& event) {
     case SDL_EVENT_JOYSTICK_REMOVED:
         LOG_DEBUG(Input, "Controller removed with Instance_ID {}", event.jdevice.which);
         CloseJoystick(SDL_GetJoystickFromID(event.jdevice.which));
+        device_generation.fetch_add(1, std::memory_order_release);
         break;
     case SDL_EVENT_JOYSTICK_ADDED:
         LOG_DEBUG(Input, "Controller connected with device index {}", event.jdevice.which);
         InitJoystick(event.jdevice.which);
+        device_generation.fetch_add(1, std::memory_order_release);
         break;
     }
 }
@@ -961,11 +1062,18 @@ std::vector<Common::ParamPackage> SDLDriver::GetInputDevices() const {
             const std::string name =
                 std::format("{} {}{}", joystick->GetControllerName(), joystick->GetPort(),
                             steam_virtual ? " (Steam)" : "");
+            bool active;
+            {
+                std::scoped_lock lock{assign_mutex};
+                active = active_pads.contains(
+                    PadKey{joystick->GetGUID().RawString(), joystick->GetPort()});
+            }
             devices.emplace_back(Common::ParamPackage{
                 {"engine", GetEngineName()},
                 {"display", std::move(name)},
                 {"guid", joystick->GetGUID().RawString()},
                 {"port", std::to_string(joystick->GetPort())},
+                {"active", active ? "1" : "0"},
             });
             if (joystick->IsJoyconLeft()) {
                 joycon_pairs.insert_or_assign(joystick->GetPort(), joystick);

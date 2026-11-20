@@ -17,6 +17,8 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets)
 add_executable(yuzu
     Info.plist
     about_dialog.cpp
+    controller_assign_dialog.cpp
+    controller_assign_dialog.h
     about_dialog.h
     aboutdialog.ui
     applets/qt_amiibo_settings.cpp
@@ -448,8 +450,22 @@ if(UNIX AND NOT APPLE)
 endif()
 
 if (WIN32 AND NOT YUZU_USE_BUNDLED_QT)
-    set(YUZU_EXE_DIR "$<TARGET_FILE_DIR:yuzu>")
-    add_custom_command(TARGET yuzu POST_BUILD COMMAND ${WINDEPLOYQT_EXECUTABLE} "${YUZU_EXE_DIR}/eden.exe" --dir "${YUZU_EXE_DIR}" --libdir "${YUZU_EXE_DIR}" --plugindir "${YUZU_EXE_DIR}/plugins" --no-compiler-runtime --no-opengl-sw --no-system-d3d-compiler --no-translations --verbose 0)
+    # Copy the Qt DLLs and plugins next to the executable. WINDEPLOYQT_EXECUTABLE was never set, so
+    # this step ran eden.exe itself with windeployqt's arguments (fix taken from Fritchii).
+    if (TARGET Qt6::windeployqt)
+        set(WINDEPLOYQT_EXECUTABLE "$<TARGET_FILE:Qt6::windeployqt>")
+    else()
+        find_program(WINDEPLOYQT_EXECUTABLE NAMES windeployqt6 windeployqt
+                     HINTS "${QT_HOST_PATH}/bin" "${QT_TARGET_PATH}/bin")
+    endif()
+    file(GENERATE OUTPUT "$<TARGET_FILE_DIR:yuzu>/qt.conf"
+         CONTENT "[Paths]\nPrefix=.\nPlugins=plugins\n")
+    if (WINDEPLOYQT_EXECUTABLE)
+        set(YUZU_EXE_DIR "$<TARGET_FILE_DIR:yuzu>")
+        add_custom_command(TARGET yuzu POST_BUILD COMMAND ${WINDEPLOYQT_EXECUTABLE} "$<TARGET_FILE:yuzu>" --dir "${YUZU_EXE_DIR}" --libdir "${YUZU_EXE_DIR}" --plugindir "${YUZU_EXE_DIR}/plugins" --no-compiler-runtime --no-opengl-sw --no-system-d3d-compiler --no-translations --verbose 0)
+    else()
+        message(WARNING "windeployqt not found: copy the Qt DLLs next to the executable yourself")
+    endif()
 endif()
 
 if (ARCHITECTURE_x86_64 OR ARCHITECTURE_arm64)

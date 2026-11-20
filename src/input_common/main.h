@@ -14,6 +14,8 @@
 #include <vector>
 #include "common/common_types.h"
 #include "common/container/unordered_map.h"
+#include "common/param_package.h"
+#include "input_common/helpers/auto_assign.h"
 
 namespace Common {
 class ParamPackage;
@@ -177,6 +179,19 @@ public:
 
     /// Signals SDL driver for new input events
     void PumpEvents() const;
+
+    /// Returns a counter that changes whenever a game controller is connected or disconnected.
+    /// Frontends can poll this to react to hot-plug events.
+    [[nodiscard]] u64 GetDeviceGeneration() const;
+
+    /// Returns the controller that held L + R + Start since the last call, if any.
+    [[nodiscard]] std::optional<Common::ParamPackage> TakeAssignRequest() const;
+
+    /// Sends this controller's D-pad/A/B presses to TakeMenuButtons(); nullopt stops it.
+    void SetMenuDevice(std::optional<Common::ParamPackage> device) const;
+
+    /// Returns the menu button presses received since the last call.
+    [[nodiscard]] std::vector<MenuButton> TakeMenuButtons() const;
 
 private:
     struct Impl;

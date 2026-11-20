@@ -186,3 +186,12 @@ Your compiled executable will be in:
 ## Scripts
 
 Take a look at our [CI scripts](https://github.com/Eden-CI/Workflow). You can use `.ci/common/configure.sh` on any POSIX-compliant shell, but you are heavily encouraged to instead write your own based on that template. It's not really that hard, provided you can read CMake.
+
+## Windows one-command build
+
+`build-windows.cmd` in the repository root (a wrapper for `tools/windows/build-local.ps1`) loads the
+Visual Studio environment, finds the Vulkan SDK, configures with Ninja (clang-cl when installed,
+otherwise MSVC) against a shared Qt 6.8.3 (from `C:\Qt\6.8.3\msvc2022_64`, `-QtDir`, or downloaded
+once into `.cache\qt` with aqtinstall, which needs Python) and builds into `build/bin`. Only progress
+and errors are shown; full logs are in `build/configure.log` and `build/build-local.log`. Options:
+`-BuildType RelWithDebInfo`, `-Compiler msvc`, `-Target yuzu`, `-QtDir <path>`, `-Clean`.

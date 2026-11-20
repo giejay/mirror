@@ -33,6 +33,8 @@
 #include "core/hle/service/filesystem/filesystem.h"
 #include "core/loader/loader.h"
 #include "frontend_common/config.h"
+#include "hid_core/hid_core.h"
+#include "input_common/helpers/auto_assign.h"
 #include "input_common/main.h"
 #include "network/network.h"
 #include "sdl_config.h"
@@ -161,7 +163,20 @@ struct SdlState {
     Core::System system{};
     InputCommon::InputSubsystem input_subsystem{};
     std::unique_ptr<EmuWindow_SDL3> emu_window;
+    u64 input_device_generation{~0ULL};
 };
+
+// Re-runs controller auto-assignment whenever a controller is connected, removed or first used.
+static void UpdateControllerAutoAssign(SdlState& state) {
+    const u64 generation = state.input_subsystem.GetDeviceGeneration();
+    if (generation == state.input_device_generation) {
+        return;
+    }
+    state.input_device_generation = generation;
+    if (InputCommon::AutoAssignControllers(state.input_subsystem) && state.system.IsPoweredOn()) {
+        state.system.HIDCore().ReloadInputDevices();
+    }
+}
 
 extern "C" SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
     SdlState* state = new SdlState();
@@ -243,6 +258,7 @@ extern "C" SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
     Service::AM::FrontendAppletParameters load_parameters{
         .applet_id = Service::AM::AppletId::Application,
     };
+    UpdateControllerAutoAssign(*state);
     const Core::SystemResultStatus load_result = state->system.Load(*state->emu_window, lp.filepath, load_parameters);
     switch (load_result) {
     case Core::SystemResultStatus::Success:
@@ -327,6 +343,7 @@ extern "C" SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
 }
 extern "C" SDL_AppResult SDL_AppIterate(void *appstate) {
     SdlState *state = (SdlState *)appstate;
+    UpdateControllerAutoAssign(*state);
     return state->emu_window->IsOpen() ? SDL_APP_CONTINUE : SDL_APP_SUCCESS;
 }
 extern "C" SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
